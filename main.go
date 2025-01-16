@@ -20,7 +20,11 @@ type Config struct {
 		Name string `mapstructure:"name"`
 		Key  string `mapstructure:"key"`
 	} `mapstructure:"users"`
-	IP []string `mapstructure:"ip"`
+	IP          []string `mapstructure:"ip"`
+	RemoveUsers []struct {
+		Name string `mapstructure:"name"`
+	} `mapstructure:"remove_users"`
+	RemoveUsersIP []string `mapstructure:"remove_users_ip"`
 }
 
 func loadConfig() (*Config, error) {
@@ -68,6 +72,19 @@ func main() {
 					continue
 				}
 				fmt.Printf("Пользователь %s успешно создан на %s\n", user.Name, ip)
+			}
+		}
+	}
+
+	// Шаг 3: Удаление пользователей
+	for _, ip := range config.RemoveUsersIP {
+		for _, admin := range config.CertsAdmin {
+			for _, user := range config.RemoveUsers {
+				if err := removeUser(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name); err != nil {
+					fmt.Printf("Ошибка удаления пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
+					continue
+				}
+				fmt.Printf("Пользователь %s успешно удален на %s\n", user.Name, ip)
 			}
 		}
 	}
@@ -202,6 +219,64 @@ func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, user
 		
 		echo "Все операции выполнены успешно"
 	`, userName, userKey, adminPassword)
+
+	var b bytes.Buffer
+	session.Stdout = &b
+	session.Stderr = &b
+
+	if err := session.Run(command); err != nil {
+		return fmt.Errorf("ошибка выполнения команды: %v\nВывод: %s", err, b.String())
+	}
+
+	return nil
+}
+
+// Добавьте новую функцию для удаления пользователя
+func removeUser(ip, adminName, adminKey, adminPassword, userName string) error {
+	signer, err := ssh.ParsePrivateKey([]byte(adminKey))
+	if err != nil {
+		return fmt.Errorf("ошибка парсинга приватного ключа админа: %w", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: adminName,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", ip), config)
+	if err != nil {
+		return fmt.Errorf("ошибка подключения к SSH: %w", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("ошибка создания сессии: %w", err)
+	}
+	defer session.Close()
+
+	command := fmt.Sprintf(`
+		set -e
+		export SUDO_PASS="%[2]s"
+		
+		echo "1. Удаление пользователя..."
+		if id "%[1]s" >/dev/null 2>&1; then
+			echo $SUDO_PASS | sudo -S userdel -r %[1]s
+			echo "Пользователь %[1]s успешно удален"
+		else
+			echo "Пользователь %[1]s не существует"
+		fi
+		
+		echo "2. Удаление файла sudoers..."
+		if [ -f "/etc/sudoers.d/%[1]s" ]; then
+			echo $SUDO_PASS | sudo -S rm /etc/sudoers.d/%[1]s
+			echo "Файл sudoers для %[1]s удален"
+		fi
+	`, userName, adminPassword)
 
 	var b bytes.Buffer
 	session.Stdout = &b
