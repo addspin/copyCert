@@ -25,6 +25,9 @@ type Config struct {
 		Name string `mapstructure:"name"`
 	} `mapstructure:"remove_users"`
 	RemoveUsersIP []string `mapstructure:"remove_users_ip"`
+	AuthPassword  struct {
+		Enable bool `mapstructure:"enable"`
+	} `mapstructure:"auth_password"`
 }
 
 func loadConfig() (*Config, error) {
@@ -67,7 +70,7 @@ func main() {
 	for _, ip := range config.IP {
 		for _, admin := range config.CertsAdmin {
 			for _, user := range config.Users {
-				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name, user.Key); err != nil {
+				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name, user.Key, config.AuthPassword.Enable); err != nil {
 					fmt.Printf("Ошибка создания пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
 					continue
 				}
@@ -150,7 +153,7 @@ func copyAdminKey(ip, adminName, adminKey, adminPass, adminPrivateKey string) er
 	return nil
 }
 
-func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string) error {
+func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string, enablePasswordAuth bool) error {
 	signer, err := ssh.ParsePrivateKey([]byte(adminKey))
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга приватного ключа админа: %w", err)
@@ -212,13 +215,21 @@ func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, user
 			exit 1
 		fi
 		
-		echo "9. Отключение входа по паролю в SSH..."
-		echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-		echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+		echo "9. Настройка входа по паролю в SSH..."
+		if %[4]t; then
+			echo "Включение входа по паролю в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+		else
+			echo "Отключение входа по паролю в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+		fi
 		echo $SUDO_PASS | sudo -S bash -c 'systemctl restart sshd'
 		
 		echo "Все операции выполнены успешно"
-	`, userName, userKey, adminPassword)
+	`, userName, userKey, adminPassword, enablePasswordAuth)
 
 	var b bytes.Buffer
 	session.Stdout = &b
