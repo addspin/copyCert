@@ -39,4 +39,8 @@ remove_users:
 # IP адреса на которых будет происходить удаление пользователей
 remove_users_ip:
   - 192.168.41.38
+
+# Настройка входа по паролю в SSH
+auth_password:
+  enable: false
 ```
