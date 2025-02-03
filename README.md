@@ -15,13 +15,6 @@ certs_admin:
       3+7JkY/vvU3UjHQ3UAGkchmtXdY4fkjD+eH+o/WZAHy9wXghQUPAvO2SRJ6dN7Sk
       ISomcUBHYqoTi800q99oGDpvCRwr7RLUE5ShR/sCgYEAuw+v9KaZhFZehDabjv9J
       95e+vRzQiMqMW0V7UiazfAjY0u1lALRd6svFTJmuS3zViWA2oTBBXA4lzRfPyxxd
-      wQS7c/trphOVRuCYMyKxebKAxtqTSUsncoFhJuGKsruPY6pMr40/lsehYh44G6KS
-      8CVnIJiFHq5PdXB8HCADGDsCgYEAiNJpiouayd4slo2KqcVHU3JDuf3CNxrPIbXy
-      CqEOZjFYueJ+Lt38z2vxFfe2+eRk1r4MuAQny3tykBE8IpXcQWhmyFp+XxSCR7RL
-      GsWx9R8W4dj+dESEaM2qAW37FIwIhS2kUhi3bCC0KTVW/61X5ZxEYI0Jm4lVCHWz
-      IPgbhfECgYAwt2PYHl6hbQ+iQwd3bQWyGZGbREt79Dyo4+uaz+yVK8vm/plproVN
-      zfojMeIHH0qHwcQJOfMLwKvVJX3vQMEmr8EN7SHSFjxJH9QG7DwWYn+fm9y+Ym2T
-      jbtXDxuqGk22lG3/w038wdDGOCb4J75qLPqw/6kqW5nYgUdv42sQPw==
       -----END RSA PRIVATE KEY-----
 
 # Данные пользователей которые будут созданы на vm (пара login - публичный ключ)
@@ -58,3 +51,11 @@ x11Forwarding:
 agentForwarding:
   enable: false
 ```
+
+## Help - описание флагов запуска
+
+- `-h` - показать справку
+- `-a` - копирование ключей админов на все серверы
+- `-c` - создание пользователей и копирование их ключей
+- `-d` - удаление пользователей
+- `-s` - установка параметров ssh
