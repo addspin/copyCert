@@ -45,4 +45,8 @@ remove_users_ip:
 # Настройка входа по паролю в SSH
 auth_password:
   enable: false
+
+# Настройка TCP форвардинга в SSH
+tcpForwarding:
+  enable: false
 ```

@@ -28,6 +28,9 @@ type Config struct {
 	AuthPassword  struct {
 		Enable bool `mapstructure:"enable"`
 	} `mapstructure:"auth_password"`
+	TCPForwarding struct {
+		Enable bool `mapstructure:"enable"`
+	} `mapstructure:"tcpForwarding"`
 }
 
 func loadConfig() (*Config, error) {
@@ -70,7 +73,7 @@ func main() {
 	for _, ip := range config.IP {
 		for _, admin := range config.CertsAdmin {
 			for _, user := range config.Users {
-				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name, user.Key, config.AuthPassword.Enable); err != nil {
+				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name, user.Key, config.AuthPassword.Enable, config.TCPForwarding.Enable); err != nil {
 					fmt.Printf("Ошибка создания пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
 					continue
 				}
@@ -153,7 +156,7 @@ func copyAdminKey(ip, adminName, adminKey, adminPass, adminPrivateKey string) er
 	return nil
 }
 
-func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string, enablePasswordAuth bool) error {
+func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string, enablePasswordAuth bool, enableTCPForwarding bool) error {
 	signer, err := ssh.ParsePrivateKey([]byte(adminKey))
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга приватного ключа админа: %w", err)
@@ -226,10 +229,23 @@ func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, user
 			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 		fi
+
+		echo "10. Настройка TCP форвардинга в SSH..."
+		if %[5]t; then
+			echo "Включение TCP форвардинга в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+		else
+			echo "Отключение TCP форвардинга в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
+		fi
+		
 		echo $SUDO_PASS | sudo -S bash -c 'systemctl restart sshd'
 		
 		echo "Все операции выполнены успешно"
-	`, userName, userKey, adminPassword, enablePasswordAuth)
+	`, userName, userKey, adminPassword, enablePasswordAuth, enableTCPForwarding)
 
 	var b bytes.Buffer
 	session.Stdout = &b
