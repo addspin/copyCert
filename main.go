@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"flag"
+
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/ssh"
 )
@@ -57,6 +59,23 @@ func loadConfig() (*Config, error) {
 }
 
 func main() {
+	// Определяем флаги командной строки
+	helpFlag := flag.Bool("h", false, "Показать справку")
+	adminFlag := flag.Bool("a", false, "Копирование ключей админов на все серверы")
+	createFlag := flag.Bool("c", false, "Создание пользователей и копирование их ключей")
+	deleteFlag := flag.Bool("d", false, "Удаление пользователей")
+	sshFlag := flag.Bool("s", false, "Установка параметров ssh")
+
+	// Парсим флаги
+	flag.Parse()
+
+	// Если не указаны флаги или указан флаг -h, показываем справку
+	if flag.NFlag() == 0 || *helpFlag {
+		flag.Usage()
+		return
+	}
+
+	// Загружаем конфигурацию
 	config, err := loadConfig()
 	if err != nil {
 		fmt.Printf("Ошибка загрузки конфига: %v\n", err)
@@ -64,43 +83,63 @@ func main() {
 	}
 
 	// Шаг 1: Копирование ключей админов на все серверы
-	for _, ip := range config.IP {
-		for _, admin := range config.CertsAdmin {
-			if err := copyAdminKey(ip, admin.Name, admin.Key, admin.Password, admin.PrivateKey); err != nil {
-				fmt.Printf("Ошибка копирования ключа админа %s на %s: %v\n", admin.Name, ip, err)
-				// Пропускаем этот сервер полностью, так как не сможем подключиться к нему для следующих операций
-				continue
+	if *adminFlag {
+		for _, ip := range config.IP {
+			for _, admin := range config.CertsAdmin {
+				if err := copyAdminKey(ip, admin.Name, admin.Key, admin.Password, admin.PrivateKey); err != nil {
+					fmt.Printf("Ошибка копирования ключа админа %s на %s: %v\n", admin.Name, ip, err)
+					// Пропускаем этот сервер полностью, так как не сможем подключиться к нему для следующих операций
+					continue
+				}
+				fmt.Printf("Ключ админа %s успешно скопирован на %s\n", admin.Name, ip)
 			}
-			fmt.Printf("Ключ админа %s успешно скопирован на %s\n", admin.Name, ip)
 		}
 	}
 
 	// Шаг 2: Создание пользователей и копирование их ключей
-	for _, ip := range config.IP {
-		for _, admin := range config.CertsAdmin {
-			for _, user := range config.Users {
-				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password,
-					user.Name, user.Key, config.AuthPassword.Enable,
-					config.TCPForwarding.Enable,
-					config.X11Forwarding.Enable,
-					config.AgentForwarding.Enable); err != nil {
-					fmt.Printf("Ошибка создания пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
-					continue
+	if *createFlag {
+		for _, ip := range config.IP {
+			for _, admin := range config.CertsAdmin {
+				for _, user := range config.Users {
+					if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password,
+						user.Name, user.Key); err != nil {
+						fmt.Printf("Ошибка создания пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
+						continue
+					}
+					fmt.Printf("Пользователь %s успешно создан на %s\n", user.Name, ip)
 				}
-				fmt.Printf("Пользователь %s успешно создан на %s\n", user.Name, ip)
 			}
 		}
 	}
 
 	// Шаг 3: Удаление пользователей
-	for _, ip := range config.RemoveUsersIP {
-		for _, admin := range config.CertsAdmin {
-			for _, user := range config.RemoveUsers {
-				if err := removeUser(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name); err != nil {
-					fmt.Printf("Ошибка удаления пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
+	if *deleteFlag {
+		for _, ip := range config.RemoveUsersIP {
+			for _, admin := range config.CertsAdmin {
+				for _, user := range config.RemoveUsers {
+					if err := removeUser(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name); err != nil {
+						fmt.Printf("Ошибка удаления пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
+						continue
+					}
+					fmt.Printf("Пользователь %s успешно удален на %s\n", user.Name, ip)
+				}
+			}
+		}
+	}
+
+	// Шаг 4: Настройка SSH
+	if *sshFlag {
+		for _, ip := range config.IP {
+			for _, admin := range config.CertsAdmin {
+				if err := configureSSH(ip, admin.Name, admin.PrivateKey, admin.Password,
+					config.AuthPassword.Enable,
+					config.TCPForwarding.Enable,
+					config.X11Forwarding.Enable,
+					config.AgentForwarding.Enable); err != nil {
+					fmt.Printf("Ошибка настройки SSH на %s (админ: %s): %v\n", ip, admin.Name, err)
 					continue
 				}
-				fmt.Printf("Пользователь %s успешно удален на %s\n", user.Name, ip)
+				fmt.Printf("SSH настроен успешно на %s\n", ip)
 			}
 		}
 	}
@@ -166,8 +205,97 @@ func copyAdminKey(ip, adminName, adminKey, adminPass, adminPrivateKey string) er
 	return nil
 }
 
-func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string,
+func configureSSH(ip, adminName, adminKey, adminPassword string,
 	enablePasswordAuth, enableTCPForwarding, enableX11Forwarding, enableAgentForwarding bool) error {
+
+	signer, err := ssh.ParsePrivateKey([]byte(adminKey))
+	if err != nil {
+		return fmt.Errorf("ошибка парсинга приватного ключа админа: %w", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: adminName,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", ip), config)
+	if err != nil {
+		return fmt.Errorf("ошибка подключения к SSH: %w", err)
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("ошибка создания сессии: %w", err)
+	}
+	defer session.Close()
+
+	command := fmt.Sprintf(`
+		set -e
+		export SUDO_PASS="%[1]s"
+
+		echo "1. Настройка входа по паролю в SSH..."
+		if %[2]t; then
+			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+		else
+			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+		fi
+
+		echo "2. Настройка TCP форвардинга в SSH..."
+		if %[3]t; then
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+		else
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
+		fi
+
+		echo "3. Настройка X11 форвардинга в SSH..."
+		if %[4]t; then
+			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding no/X11Forwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding yes/X11Forwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^X11Forwarding no/X11Forwarding yes/' /etc/ssh/sshd_config
+		else
+			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
+		fi
+
+		echo "4. Настройка Agent форвардинга в SSH..."
+		if %[5]t; then
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding no/AllowAgentForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding yes/AllowAgentForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowAgentForwarding no/AllowAgentForwarding yes/' /etc/ssh/sshd_config
+		else
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding yes/AllowAgentForwarding no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowAgentForwarding yes/AllowAgentForwarding no/' /etc/ssh/sshd_config
+		fi
+		
+		echo $SUDO_PASS | sudo -S systemctl restart sshd
+		
+		echo "Настройка SSH выполнена успешно"
+	`, adminPassword, enablePasswordAuth, enableTCPForwarding, enableX11Forwarding, enableAgentForwarding)
+
+	var b bytes.Buffer
+	session.Stdout = &b
+	session.Stderr = &b
+
+	if err := session.Run(command); err != nil {
+		return fmt.Errorf("ошибка выполнения команды: %v\nВывод: %s", err, b.String())
+	}
+
+	return nil
+}
+
+func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string) error {
+
 	signer, err := ssh.ParsePrivateKey([]byte(adminKey))
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга приватного ключа админа: %w", err)
@@ -229,58 +357,8 @@ func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, user
 			exit 1
 		fi
 		
-		echo "9. Настройка входа по паролю в SSH..."
-		if %[4]t; then
-			echo "Включение входа по паролю в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-		else
-			echo "Отключение входа по паролю в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-		fi
-
-		echo "10. Настройка TCP форвардинга в SSH..."
-		if %[5]t; then
-			echo "Включение TCP форвардинга в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
-		else
-			echo "Отключение TCP форвардинга в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
-		fi
-
-		echo "11. Настройка X11 форвардинга в SSH..."
-		if %[6]t; then
-			echo "Включение X11 форвардинга в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding no/X11Forwarding yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding yes/X11Forwarding yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^X11Forwarding no/X11Forwarding yes/' /etc/ssh/sshd_config
-		else
-			echo "Отключение X11 форвардинга в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
-		fi
-
-		echo "12. Настройка Agent форвардинга в SSH..."
-		if %[7]t; then
-			echo "Включение Agent форвардинга в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding no/AllowAgentForwarding yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding yes/AllowAgentForwarding yes/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^AllowAgentForwarding no/AllowAgentForwarding yes/' /etc/ssh/sshd_config
-		else
-			echo "Отключение Agent форвардинга в SSH..."
-			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding yes/AllowAgentForwarding no/' /etc/ssh/sshd_config
-			echo $SUDO_PASS | sudo -S sed -i 's/^AllowAgentForwarding yes/AllowAgentForwarding no/' /etc/ssh/sshd_config
-		fi
-		
-		echo $SUDO_PASS | sudo -S bash -c 'systemctl restart sshd'
-		
 		echo "Все операции выполнены успешно"
-	`, userName, userKey, adminPassword, enablePasswordAuth, enableTCPForwarding, enableX11Forwarding, enableAgentForwarding)
+	`, userName, userKey, adminPassword)
 
 	var b bytes.Buffer
 	session.Stdout = &b
