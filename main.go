@@ -31,6 +31,12 @@ type Config struct {
 	TCPForwarding struct {
 		Enable bool `mapstructure:"enable"`
 	} `mapstructure:"tcpForwarding"`
+	X11Forwarding struct {
+		Enable bool `mapstructure:"enable"`
+	} `mapstructure:"x11Forwarding"`
+	AgentForwarding struct {
+		Enable bool `mapstructure:"enable"`
+	} `mapstructure:"agentForwarding"`
 }
 
 func loadConfig() (*Config, error) {
@@ -73,7 +79,11 @@ func main() {
 	for _, ip := range config.IP {
 		for _, admin := range config.CertsAdmin {
 			for _, user := range config.Users {
-				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password, user.Name, user.Key, config.AuthPassword.Enable, config.TCPForwarding.Enable); err != nil {
+				if err := createUserAndCopyKey(ip, admin.Name, admin.PrivateKey, admin.Password,
+					user.Name, user.Key, config.AuthPassword.Enable,
+					config.TCPForwarding.Enable,
+					config.X11Forwarding.Enable,
+					config.AgentForwarding.Enable); err != nil {
 					fmt.Printf("Ошибка создания пользователя %s на %s (админ: %s): %v\n", user.Name, ip, admin.Name, err)
 					continue
 				}
@@ -156,7 +166,8 @@ func copyAdminKey(ip, adminName, adminKey, adminPass, adminPrivateKey string) er
 	return nil
 }
 
-func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string, enablePasswordAuth bool, enableTCPForwarding bool) error {
+func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, userKey string,
+	enablePasswordAuth, enableTCPForwarding, enableX11Forwarding, enableAgentForwarding bool) error {
 	signer, err := ssh.ParsePrivateKey([]byte(adminKey))
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга приватного ключа админа: %w", err)
@@ -241,11 +252,35 @@ func createUserAndCopyKey(ip, adminName, adminKey, adminPassword, userName, user
 			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
 			echo $SUDO_PASS | sudo -S sed -i 's/^AllowTcpForwarding yes/AllowTcpForwarding no/' /etc/ssh/sshd_config
 		fi
+
+		echo "11. Настройка X11 форвардинга в SSH..."
+		if %[6]t; then
+			echo "Включение X11 форвардинга в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding no/X11Forwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding yes/X11Forwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^X11Forwarding no/X11Forwarding yes/' /etc/ssh/sshd_config
+		else
+			echo "Отключение X11 форвардинга в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
+		fi
+
+		echo "12. Настройка Agent форвардинга в SSH..."
+		if %[7]t; then
+			echo "Включение Agent форвардинга в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding no/AllowAgentForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding yes/AllowAgentForwarding yes/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowAgentForwarding no/AllowAgentForwarding yes/' /etc/ssh/sshd_config
+		else
+			echo "Отключение Agent форвардинга в SSH..."
+			echo $SUDO_PASS | sudo -S sed -i 's/^#AllowAgentForwarding yes/AllowAgentForwarding no/' /etc/ssh/sshd_config
+			echo $SUDO_PASS | sudo -S sed -i 's/^AllowAgentForwarding yes/AllowAgentForwarding no/' /etc/ssh/sshd_config
+		fi
 		
 		echo $SUDO_PASS | sudo -S bash -c 'systemctl restart sshd'
 		
 		echo "Все операции выполнены успешно"
-	`, userName, userKey, adminPassword, enablePasswordAuth, enableTCPForwarding)
+	`, userName, userKey, adminPassword, enablePasswordAuth, enableTCPForwarding, enableX11Forwarding, enableAgentForwarding)
 
 	var b bytes.Buffer
 	session.Stdout = &b

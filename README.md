@@ -49,4 +49,12 @@ auth_password:
 # Настройка TCP форвардинга в SSH
 tcpForwarding:
   enable: false
+
+# Настройка X11 форвардинга в SSH
+x11Forwarding:
+  enable: false
+
+# Настройка Agent форвардинга в SSH
+agentForwarding:
+  enable: false
 ```
